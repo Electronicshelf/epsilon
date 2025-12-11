@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SentriLens Mini - Text Checker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+        }
+        label {
+            display: block;
+            margin-top: 15px;
+            font-weight: bold;
+            color: #333;
+        }
+        textarea, select, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        textarea {
+            min-height: 120px;
+            font-family: Arial, sans-serif;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .risk-LOW { background: #d4edda; border-left: 4px solid #28a745; }
+        .risk-MEDIUM { background: #fff3cd; border-left: 4px solid #ffc107; }
+        .risk-HIGH { background: #f8d7da; border-left: 4px solid #dc3545; }
+        .risk-CRITICAL { background: #f8d7da; border-left: 4px solid #721c24; }
+        .violation {
+            background: #fff;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #dc3545;
+            border-radius: 3px;
+        }
+        .suggestion {
+            background: #e7f3ff;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #0066cc;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 SentriLens Text Checker</h1>
+        <p style="text-align: center; color: #666;">Check your marketing content for compliance issues</p>
+
+        <label for="domain">Select Domain:</label>
+        <select id="domain">
+            <option value="biopharma">Biopharma (Health/Medical)</option>
+            <option value="finance">Finance (Investments)</option>
+            <option value="ads">General Advertising</option>
+        </select>
+
+        <label for="content">Your Text:</label>
+        <textarea id="content" placeholder="Enter your marketing text here..."></textarea>
+
+        <button onclick="analyzeText()">🔍 Check Compliance</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        async function analyzeText() {
+            const content = document.getElementById('content').value;
+            const domain = document.getElementById('domain').value;
+            const resultDiv = document.getElementById('result');
+
+            if (!content.trim()) {
+                alert('Please enter some text to analyze');
+                return;
+            }
+
+            // Show loading
+            resultDiv.innerHTML = '<p>⏳ Analyzing...</p>';
+            resultDiv.style.display = 'block';
+            resultDiv.className = '';
+
+            try {
+                const response = await fetch('http://localhost:5000/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        domain: domain
+                    })
+                });
+
+                const data = await response.json();
+
+                // Display result
+                displayResult(data);
+
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p style="color: red;">❌ Error: Cannot connect to API</p>
+                    <p>Make sure the API is running: <code>python app.py</code></p>
+                `;
+            }
+        }
+
+        function displayResult(data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'risk-' + data.risk_level;
+
+            let html = `
+                <h2>📊 Analysis Results</h2>
+                <p><strong>Risk Level:</strong> ${getRiskEmoji(data.risk_level)} ${data.risk_level}</p>
+                <p><strong>Risk Score:</strong> ${data.risk_score} / 1.0</p>
+                <p><strong>Domain:</strong> ${data.domain}</p>
+            `;
+
+            if (data.violations && data.violations.length > 0) {
+                html += '<h3>⚠️ Violations Found:</h3>';
+                data.violations.forEach(v => {
+                    html += `
+                        <div class="violation">
+                            <strong>${v.term}</strong> (${v.severity})
+                            <br>${v.message}
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<p style="color: green;">✅ No violations detected!</p>';
+            }
+
+            if (data.suggestions && data.suggestions.length > 0) {
+                html += '<h3>💡 Suggestions:</h3>';
+                data.suggestions.forEach(s => {
+                    html += `<div class="suggestion">${s}</div>`;
+                });
+            }
+
+            resultDiv.innerHTML = html;
+        }
+
+        function getRiskEmoji(level) {
+            const emojis = {
+                'LOW': '✅',
+                'MEDIUM': '⚠️',
+                'HIGH': '❌',
+                'CRITICAL': '🚨'
+            };
+            return emojis[level] || '❓';
+        }
+    </script>
+</body>
+</html>

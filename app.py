@@ -16,11 +16,12 @@ API Endpoints:
 """
 
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from datetime import datetime
 import json
 
 app = Flask(__name__)
-
+CORS(app)
 
 # ============================================================================
 # COMPLIANCE RULES

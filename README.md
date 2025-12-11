@@ -52,11 +52,13 @@ ls
 
 ```bash
 pip install flask
+pip install flask-cors
 ```
 
 **If that doesn't work, try:**
 ```bash
 pip3 install flask
+pip3 install flask-cors
 ```
 
 **Wait for it to finish** (takes ~30 seconds)

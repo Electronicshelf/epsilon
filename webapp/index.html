@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SentriLens - Image Compliance Checker</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            background: #fafafa;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #e8edff;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        label {
+            display: block;
+            margin-top: 15px;
+            font-weight: bold;
+            color: #333;
+        }
+        select, button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #preview {
+            max-width: 100%;
+            max-height: 400px;
+            margin: 20px 0;
+            border-radius: 8px;
+            display: none;
+        }
+        #result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+        .status-COMPLIANT { background: #d4edda; border-left: 4px solid #28a745; }
+        .status-NON_COMPLIANT { background: #f8d7da; border-left: 4px solid #dc3545; }
+        .status-REVIEW_REQUIRED { background: #fff3cd; border-left: 4px solid #ffc107; }
+        .violation {
+            background: #fff;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 3px solid #dc3545;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .violation-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .severity {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .severity-HIGH { background: #f8d7da; color: #721c24; }
+        .severity-MEDIUM { background: #fff3cd; color: #856404; }
+        .severity-LOW { background: #d1ecf1; color: #0c5460; }
+        .severity-CRITICAL { background: #f5c6cb; color: #721c24; }
+        .evidence {
+            background: #f8f9fa;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 SentriLens Compliance Checker</h1>
+        <p class="subtitle">Upload an image to check for Meta advertising compliance violations</p>
+
+        <label for="domain">Domain:</label>
+        <select id="domain">
+            <option value="biopharma">Biopharma (Health/Medical)</option>
+            <option value="finance">Finance (Investments)</option>
+            <option value="ads" selected>General Advertising</option>
+        </select>
+
+        <div class="upload-area" id="uploadArea">
+            <p>📷 Click to upload or drag and drop an image</p>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+
+        <img id="preview" alt="Preview">
+
+        <button id="analyzeBtn" onclick="analyzeImage()" disabled>🔍 Analyze Compliance</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const imageInput = document.getElementById('imageInput');
+        const preview = document.getElementById('preview');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const resultDiv = document.getElementById('result');
+
+        // File input handling
+        uploadArea.addEventListener('click', () => imageInput.click());
+        imageInput.addEventListener('change', handleFileSelect);
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type.startsWith('image/')) {
+                imageInput.files = files;
+                handleFileSelect({ target: { files: files } });
+            }
+        });
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    preview.src = event.target.result;
+                    preview.style.display = 'block';
+                    analyzeBtn.disabled = false;
+                    resultDiv.style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        async function analyzeImage() {
+            const file = imageInput.files[0];
+            const domain = document.getElementById('domain').value;
+
+            if (!file) {
+                alert('Please select an image first');
+                return;
+            }
+
+            // Show loading
+            resultDiv.innerHTML = '<div class="loading">⏳ Analyzing image... This may take a moment.</div>';
+            resultDiv.style.display = 'block';
+            resultDiv.className = '';
+            analyzeBtn.disabled = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('image', file);
+                formData.append('domain', domain);
+
+                const response = await fetch('http://localhost:5000/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Analysis failed');
+                }
+
+                const data = await response.json();
+                displayResult(data);
+
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <strong>❌ Error:</strong> ${error.message}<br>
+                        <small>Make sure the API is running: <code>python app.py</code></small>
+                    </div>
+                `;
+            } finally {
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        function displayResult(data) {
+            resultDiv.className = `status-${data.status}`;
+            
+            let html = `
+                <h2>📊 Compliance Analysis Results</h2>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0;">
+                    <div>
+                        <strong>Status:</strong> ${getStatusEmoji(data.status)} ${data.status.replace('_', ' ')}
+                    </div>
+                    <div>
+                        <strong>Risk Level:</strong> ${getRiskEmoji(data.risk_level)} ${data.risk_level}
+                    </div>
+                    <div>
+                        <strong>Risk Score:</strong> ${data.risk_score} / 1.0
+                    </div>
+                    <div>
+                        <strong>Violations:</strong> ${data.violation_count}
+                    </div>
+                </div>
+            `;
+
+            if (data.violations && data.violations.length > 0) {
+                html += '<h3>⚠️ Violations Found:</h3>';
+                data.violations.forEach(v => {
+                    html += `
+                        <div class="violation">
+                            <div class="violation-header">
+                                <strong>${v.rule_name}</strong>
+                                <span class="severity severity-${v.severity}">${v.severity}</span>
+                            </div>
+                            <p>${v.description}</p>
+                            ${v.evidence && v.evidence.length > 0 ? `
+                                <div style="margin-top: 10px;">
+                                    <strong>Evidence:</strong>
+                                    ${v.evidence.map(e => `
+                                        <div class="evidence">
+                                            ${e.description}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<p style="color: green; font-weight: bold;">✅ No violations detected! Image appears compliant.</p>';
+            }
+
+            if (data.signals_count > 0) {
+                html += `<p style="color: #666; font-size: 13px; margin-top: 15px;">Detected ${data.signals_count} signals from image analysis.</p>`;
+            }
+
+            resultDiv.innerHTML = html;
+        }
+
+        function getStatusEmoji(status) {
+            const emojis = {
+                'COMPLIANT': '✅',
+                'NON_COMPLIANT': '❌',
+                'REVIEW_REQUIRED': '⚠️'
+            };
+            return emojis[status] || '❓';
+        }
+
+        function getRiskEmoji(level) {
+            const emojis = {
+                'LOW': '✅',
+                'MEDIUM': '⚠️',
+                'HIGH': '❌',
+                'CRITICAL': '🚨'
+            };
+            return emojis[level] || '❓';
+        }
+    </script>
+</body>
+</html>

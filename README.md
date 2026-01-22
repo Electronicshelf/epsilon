@@ -1,279 +1,186 @@
-# How to Run SentriLens Mini API
+# SentriLens Compliance API
 
-**Super simple guide - No experience needed!**
+API-first advertising compliance system for Meta image ads (v1).
 
----
+## Architecture
 
-## 🎯 Goal
+This repository follows a clean, minimal architecture with clear separation of concerns:
 
-Get the API running so you can test it in your browser or with commands.
-
----
-
-## ✅ Step 1: Check Python
-
-Open terminal and type:
-
-```bash
-python --version
+```
+api/          - Request/response handling (Flask routes)
+pipeline/     - Orchestration: signals → violations → outcome
+models/       - Wrappers for vision/OCR/VLM models (placeholders)
+schemas/      - Internal data models (Asset, Signal, Violation, Evidence, Outcome)
+webapp/       - Thin frontend client (no business logic)
 ```
 
-**Should show:** Python 3.8 or higher
+## Data Flow
 
-If not working, try:
-```bash
-python3 --version
+```
+Image Upload → API → Pipeline → Models → Signals → Rule Checking → Violations → Outcome
 ```
 
-**If Python is not installed:** Download from [python.org](https://python.org)
+1. **API** receives image upload
+2. **Pipeline** orchestrates the analysis:
+   - Extracts signals using **Models** (OCR, Vision, VLM)
+   - Checks signals against compliance rules
+   - Generates violations with evidence
+   - Calculates risk score and status
+3. **Outcome** returned to client
 
----
+## Quick Start
 
-## ✅ Step 2: Go to Project Folder
-
-```bash
-cd ~/PycharmProjects/sentrilens-mini-api
-```
-
-**Check you're in the right place:**
-```bash
-ls
-```
-
-**Should see these files:**
-- app.py
-- README.md
-- requirements.txt
-- test_api.py
-
----
-
-## ✅ Step 3: Install Flask (One Time Only)
+### 1. Install Dependencies
 
 ```bash
-pip install flask
-pip install flask-cors
+pip install -r requirements.txt
 ```
 
-**If that doesn't work, try:**
-```bash
-pip3 install flask
-pip3 install flask-cors
-```
-
-**Wait for it to finish** (takes ~30 seconds)
-
----
-
-## ✅ Step 4: Start the API
+### 2. Start the API
 
 ```bash
 python app.py
 ```
 
-**You should see this:**
-```
-============================================================
-🚀 SentriLens Mini API
-============================================================
-Server starting on http://localhost:5000
+The API will start on `http://localhost:5000`
 
-Endpoints:
-  GET  /            - API info
-  GET  /health      - Health check
-  POST /analyze     - Analyze text
-  GET  /rules       - List rules
-============================================================
- * Running on http://0.0.0.0:5000
-```
+### 3. Use the Web App
 
-**✨ SUCCESS! The API is now running!**
+Open `webapp/index.html` in your browser and upload an image.
 
-⚠️ **IMPORTANT:** Keep this terminal window open! Don't close it!
-
----
-
-## ✅ Step 5: Test It
-
-### Option A: Using Browser (Easiest)
-
-1. **Open a web browser**
-2. **Go to:** http://localhost:5000/health
-3. **You should see:**
-   ```json
-   {
-     "status": "ok",
-     "timestamp": "2025-12-11T..."
-   }
-   ```
-
-**🎉 It's working!**
-
-### Option B: Using Terminal (Open NEW Terminal)
-
-**Open a NEW terminal** (keep the first one running)
+### 4. Test the API
 
 ```bash
-curl http://localhost:5000/health
+python test_api.py
 ```
 
-**Should show:**
-```json
-{"status":"ok","timestamp":"..."}
-```
+## API Endpoints
 
----
+- `GET /` - API information
+- `GET /health` - Health check
+- `POST /analyze` - Analyze image for compliance
+  - Form data: `image` (file), `domain` (optional: biopharma, finance, ads)
+- `GET /rules` - List available compliance rules
 
-## 🌐 Using the Web Interface
+## Example Usage
 
-### Create the HTML Page
-
-1. **In the same folder** (`sentrilens-mini-api`), create a file called `index.html`
-2. **Copy the HTML code** from the previous message into it
-3. **Double-click** `index.html` to open in browser
-4. **Use the form** to test compliance checking!
-
----
-
-## 🧪 Test with Commands
-
-**Open a NEW terminal** (keep API running in the first one)
+### Using the Test Script (Easiest)
 
 ```bash
-# Go to the project folder
-cd ~/PycharmProjects/sentrilens-mini-api
+# Test with a real image
+python test_with_real_image.py path/to/your/image.jpg
 
-# Test 1: Check health
-curl http://localhost:5000/health
+# With specific domain
+python test_with_real_image.py path/to/your/image.jpg --domain biopharma
+```
 
-# Test 2: Analyze text
+### Using curl
+
+```bash
+# V1 API endpoint
+curl -X POST http://localhost:5000/v1/ads/meta/image/check \
+  -F "image=@your_image.jpg" \
+  -F "domain=ads" | jq .
+
+# Legacy endpoint
 curl -X POST http://localhost:5000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Guaranteed cure!", "domain": "biopharma"}'
+  -F "image=@your_image.jpg" \
+  -F "domain=biopharma"
 ```
 
----
+### Using Python
 
-## 🛑 How to Stop the API
+```python
+import requests
 
-In the terminal where the API is running:
-
-**Press:** `Ctrl + C`
-
-**You'll see:** `Keyboard interrupt received`
-
-**To start again:** `python app.py`
-
----
-
-## 📋 Quick Reference
-
-| Action | Command |
-|--------|---------|
-| **Start API** | `python app.py` |
-| **Stop API** | Press `Ctrl + C` |
-| **Test in browser** | http://localhost:5000/health |
-| **Run tests** | `python test_api.py` |
-
----
-
-## ❓ Common Problems
-
-### Problem 1: "pip: command not found"
-
-**Try:**
-```bash
-pip3 install flask
+with open('image.jpg', 'rb') as f:
+    response = requests.post(
+        'http://localhost:5000/v1/ads/meta/image/check',
+        files={'image': f},
+        data={'domain': 'ads'}
+    )
+    
+result = response.json()
+print(f"Risk Score: {result['risk_score']}")
+print(f"Verdict: {result['verdict']}")
+print(f"Violations: {len(result['violations'])}")
 ```
 
-### Problem 2: "Port 5000 already in use"
+### Using the Web App
 
-**Solution:**
-```bash
-# Kill the process using port 5000
-lsof -ti:5000 | xargs kill -9
+1. Open `webapp/index.html` in your browser
+2. Upload an image
+3. Select domain
+4. Click "Analyze Compliance"
 
-# Then start again
-python app.py
+## Project Structure
+
+```
+epsilon/
+├── api/              # API routes and request handling
+│   ├── __init__.py
+│   └── routes.py
+├── pipeline/         # Compliance pipeline orchestration
+│   ├── __init__.py
+│   └── engine.py
+├── models/           # Model wrappers (OCR, Vision, VLM)
+│   ├── __init__.py
+│   ├── ocr.py
+│   ├── vision.py
+│   └── vlm.py
+├── schemas/          # Data models
+│   ├── __init__.py
+│   └── models.py
+├── webapp/           # Frontend client
+│   ├── index.html
+│   └── README.md
+├── app.py            # Application entry point
+├── test_api.py       # API tests
+└── requirements.txt
 ```
 
-### Problem 3: "Connection refused"
+## Key Design Decisions
 
-**The API is not running!**
+- **API-First**: Backend is a REST API, frontend is a consumer
+- **Pipeline-Based**: Clear flow from signals to violations to outcome
+- **Minimal**: No production infra, auth, or dashboards
+- **Placeholder Models**: Model wrappers are placeholders for actual implementations
+- **Clear Separation**: Business logic in pipeline, not in API or webapp
 
-**Solution:**
-1. Check terminal where you ran `python app.py`
-2. Make sure it says "Running on http://0.0.0.0:5000"
-3. If not, start it: `python app.py`
+## Data Models
 
-### Problem 4: "Cannot find app.py"
+- **Asset**: Input image with metadata
+- **Signal**: Detected feature from models (text, objects, etc.)
+- **Violation**: Compliance rule violation with severity
+- **Evidence**: Supporting data for violations
+- **Outcome**: Final compliance assessment
 
-**You're in the wrong folder!**
+## Compliance Rules
 
-**Solution:**
-```bash
-cd ~/PycharmProjects/sentrilens-mini-api
-ls  # Should show app.py
-python app.py
-```
+Rules are defined in `pipeline/engine.py` and check for:
+- Prohibited text claims (e.g., "cure", "guaranteed")
+- Restricted objects/scenes
+- Brand usage violations
+- Contextual violations
 
-### Problem 5: "ModuleNotFoundError: No module named 'flask'"
+## Development
 
-**Flask is not installed!**
+The codebase is designed to be:
+- **Readable**: Clear structure and minimal complexity
+- **Extensible**: Easy to add new models or rules
+- **Testable**: Clear separation allows unit testing
 
-**Solution:**
-```bash
-pip install flask
-```
+## Future Enhancements
 
----
+- Replace placeholder models with actual OCR/Vision/VLM implementations
+- Load rules from database or config file
+- Add image preview with violation overlays
+- Support batch processing
+- Add more sophisticated rule matching (NLP, regex)
 
-## 🎯 Complete Workflow
+## Notes
 
-### Terminal 1 (API Server)
-```bash
-cd ~/PycharmProjects/sentrilens-mini-api
-python app.py
-# Keep this running!
-```
-
-### Terminal 2 (Testing)
-```bash
-cd ~/PycharmProjects/sentrilens-mini-api
-curl http://localhost:5000/health
-```
-
-### Browser
-```
-Open: http://localhost:5000/
-Or: Open index.html file
-```
-
----
-
-## 📱 What Each Endpoint Does
-
-| URL | What it does |
-|-----|--------------|
-| http://localhost:5000/ | Shows API info |
-| http://localhost:5000/health | Health check (is it working?) |
-| http://localhost:5000/rules | Shows all compliance rules |
-| http://localhost:5000/analyze | Checks text (POST only) |
-
----
-
-## ✨ You're Done!
-
-**What you can do now:**
-- ✅ Test compliance checking
-- ✅ Try different domains (biopharma, finance, ads)
-- ✅ Build your own apps using this API
-- ✅ Show it to others
-
-**Need help?** 
-- Run `python test_api.py` to verify everything works
-- Check README.md for detailed docs
-
----
-
-**Made with ❤️ for easy learning**
+- Models are currently placeholders that return empty results
+- Rules are hardcoded but structured for easy extension
+- Web app is a thin client with no business logic
+- All compliance logic lives in the backend pipeline

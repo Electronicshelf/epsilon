@@ -12,7 +12,7 @@ import requests
 import json
 import argparse
 
-BASE_URL = "http://localhost:5000"
+BASE_URL = "http://localhost:5001"
 
 
 def test_with_image(image_path: str, domain: str = "ads"):

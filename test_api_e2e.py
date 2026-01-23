@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import sys
 import os
 
-BASE_URL = "http://localhost:5000"
+BASE_URL = "http://localhost:5001"
 
 def create_image_with_text(text: str = "Guaranteed instant results!"):
     """Create a test image with text (simulates OCR detection)."""

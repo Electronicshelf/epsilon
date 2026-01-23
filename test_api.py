@@ -10,7 +10,7 @@ import time
 from io import BytesIO
 from PIL import Image
 
-BASE_URL = "http://localhost:5000"
+BASE_URL = "http://localhost:5001"
 
 def print_section(title):
     print("\n" + "="*60)

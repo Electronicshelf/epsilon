@@ -9,6 +9,23 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from schemas.models import Signal, SignalType, Asset, Verdict
+
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+FIXTURE_PNG = os.path.join(TESTS_DIR, "tests", "assets", "fixture.png")
+FIXTURE_WITH_TEXT_PNG = os.path.join(TESTS_DIR, "tests", "assets", "fixture_with_text.png")
+
+
+def _load_fixture(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def load_fixture_image() -> bytes:
+    return _load_fixture(FIXTURE_PNG)
+
+
+def load_text_fixture_image() -> bytes:
+    return _load_fixture(FIXTURE_WITH_TEXT_PNG)
 from pipeline.engine import CompliancePipeline
 import uuid
 from datetime import datetime
@@ -36,7 +53,7 @@ def test_outcome_generation_no_violations():
     
     asset = Asset(
         image_id=str(uuid.uuid4()),
-        image_data=b"fake_image",
+        image_data=load_fixture_image(),
         filename="test.jpg",
         content_type="image/jpeg"
     )
@@ -74,7 +91,7 @@ def test_outcome_generation_likely_rejected():
     
     asset = Asset(
         image_id=str(uuid.uuid4()),
-        image_data=b"fake_image",
+        image_data=load_fixture_image(),
         filename="test.jpg",
         content_type="image/jpeg"
     )
@@ -126,7 +143,7 @@ def test_outcome_generation_borderline():
     
     asset = Asset(
         image_id=str(uuid.uuid4()),
-        image_data=b"fake_image",
+        image_data=load_fixture_image(),
         filename="test.jpg",
         content_type="image/jpeg"
     )
@@ -192,7 +209,7 @@ def test_risk_score_calculation():
     
     asset = Asset(
         image_id=str(uuid.uuid4()),
-        image_data=b"fake_image",
+        image_data=load_fixture_image(),
         filename="test.jpg",
         content_type="image/jpeg"
     )
@@ -230,7 +247,7 @@ def test_fix_suggestions_for_misleading_claims():
     
     asset = Asset(
         image_id=str(uuid.uuid4()),
-        image_data=b"fake_image",
+        image_data=load_fixture_image(),
         filename="test.jpg",
         content_type="image/jpeg"
     )
@@ -311,6 +328,40 @@ def test_api_response_format():
     return True
 
 
+def test_confidence_routing_and_vlm_stub():
+    """Test confidence routing triggers VLM stub evidence."""
+    print("\n" + "=" * 60)
+    print("TEST 7: Confidence Routing + VLM Stub")
+    print("=" * 60)
+
+    pipeline = CompliancePipeline()
+
+    asset = Asset(
+        image_id=str(uuid.uuid4()),
+        image_data=load_text_fixture_image(),
+        filename="test.jpg",
+        content_type="image/jpeg"
+    )
+
+    outcome = pipeline.process(asset)
+
+    print(f"Routing: {outcome.metadata.get('routing')}")
+    print(f"Status: {outcome.status.value}")
+
+    assert outcome.metadata.get("routing") == "borderline_requires_context"
+
+    # Ensure VLM stub evidence was attached
+    has_vlm_stub = any(
+        ev.evidence_type == "vlm_reasoning_stub"
+        for v in outcome.violations
+        for ev in v.evidence
+    )
+    assert has_vlm_stub, "Expected VLM reasoning stub evidence"
+
+    print("\n✅ PASSED")
+    return True
+
+
 def main():
     """Run all tests."""
     print("\n" + "=" * 60)
@@ -324,6 +375,7 @@ def main():
     results.append(("Risk Score Calculation", test_risk_score_calculation()))
     results.append(("Fix Suggestions", test_fix_suggestions_for_misleading_claims()))
     results.append(("API Response Format", test_api_response_format()))
+    results.append(("Confidence Routing + VLM Stub", test_confidence_routing_and_vlm_stub()))
     
     print("\n" + "=" * 60)
     print("TEST SUMMARY")

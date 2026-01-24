@@ -18,6 +18,7 @@ from schemas.models import Asset, Signal, Violation, Outcome, ComplianceStatus, 
 from models.ocr import OCRModel
 from models.vision import VisionModel
 from models.vlm import VLMModel
+from models.embedding import EmbeddingSimilarityModel
 import uuid
 from datetime import datetime
 
@@ -31,6 +32,7 @@ class CompliancePipeline:
         self.ocr_model = OCRModel()
         self.vision_model = VisionModel()
         self.vlm_model = VLMModel()
+        self.embedding_model = EmbeddingSimilarityModel()
         self._rules = self._load_rules()
     
     def process(self, asset: Asset) -> Outcome:
@@ -61,12 +63,24 @@ class CompliancePipeline:
         
         # Step 4: Determine status
         status = self._determine_status(risk_score, violations)
+
+        # Step 4.5: Confidence-based routing at aggregation stage
+        rule_confidence = self._calculate_rule_confidence(violations)
+        confidence_threshold = 0.85
+        routing_flag = None
+        if rule_confidence < confidence_threshold:
+            routing_flag = "borderline_requires_context"
+            status = ComplianceStatus.REVIEW_REQUIRED
         
         # Step 5: Determine verdict
         verdict = self._determine_verdict(risk_score)
         
         # Step 6: Generate fix suggestions
         fix_suggestions = self._generate_fix_suggestions(violations)
+
+        # Step 6.5: VLM escalation stub for borderline cases
+        if routing_flag == "borderline_requires_context":
+            self._attach_vlm_reasoning_stub(violations)
         
         # Step 7: Create outcome
         outcome = Outcome(
@@ -80,6 +94,9 @@ class CompliancePipeline:
             fix_suggestions=fix_suggestions,
             processed_at=datetime.now()
         )
+
+        if routing_flag:
+            outcome.metadata["routing"] = routing_flag
         
         return outcome
     
@@ -108,6 +125,10 @@ class CompliancePipeline:
         # Use VLM to check compliance context
         context_signals = self.vlm_model.check_compliance_context(asset.image_data, signals)
         signals.extend(context_signals)
+
+        # Embedding similarity vs regulation texts (emit only when similarity > threshold)
+        embedding_signals = self.embedding_model.extract_similarity(asset.image_data)
+        signals.extend(embedding_signals)
         
         return signals
     
@@ -126,6 +147,11 @@ class CompliancePipeline:
         
         # Check text signals against all rules
         text_signals = [s for s in signals if s.signal_type == SignalType.TEXT]
+        embedding_signals = [
+            s for s in signals
+            if s.raw_data.get("type") == "image_embedding_similarity"
+            and s.raw_data.get("regulation") == "misleading_claims"
+        ]
         
         # Group violations by rule_id to avoid duplicates
         # Each rule can have multiple matching signals
@@ -160,10 +186,30 @@ class CompliancePipeline:
                         "matched_text": signal.raw_data.get("text", ""),
                         "matched_term": matched_term,
                         "confidence": confidence,
-                        "signal_confidence": signal.confidence
+                        "signal_confidence": signal.confidence,
+                        "ocr_text": signal.raw_data.get("text", ""),
+                        "bbox": signal.bounding_box
                     }
                 )
                 evidence_list.append(evidence)
+
+            # Add embedding evidence as low-weight support only
+            if rule_id == "misleading_exaggerated_claims" and embedding_signals:
+                for signal in embedding_signals:
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",  # Will be set after violation creation
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence
+                        }
+                    )
+                    evidence_list.append(evidence)
             
             # Calculate overall confidence for the violation
             # Use average of individual match confidences, weighted by signal confidence
@@ -289,6 +335,32 @@ class CompliancePipeline:
         
         risk_score = min(base_score + count_factor + severity_factor, 1.0)
         return round(risk_score, 3)  # Round to 3 decimal places for stability
+
+    def _calculate_rule_confidence(self, violations: List[Violation]) -> float:
+        """
+        Calculate overall rule-based confidence from violations.
+
+        Uses evidence confidence and signal confidence as a proxy for
+        how reliable the rule-based outcome is.
+        """
+        if not violations:
+            return 1.0
+
+        confidence_values = []
+        for violation in violations:
+            if violation.evidence:
+                violation_conf = sum(
+                    e.data.get("confidence", 0.8) * e.data.get("signal_confidence", 0.8)
+                    for e in violation.evidence
+                ) / len(violation.evidence)
+                confidence_values.append(violation_conf)
+            else:
+                confidence_values.append(0.8)
+
+        if not confidence_values:
+            return 0.8
+
+        return round(sum(confidence_values) / len(confidence_values), 3)
     
     def _determine_status(self, risk_score: float, violations: List[Violation]) -> ComplianceStatus:
         """Determine final compliance status."""
@@ -395,6 +467,28 @@ class CompliancePipeline:
                 unique_suggestions.append(suggestion)
         
         return unique_suggestions[:5]  # Limit to 5 suggestions
+
+    def _attach_vlm_reasoning_stub(self, violations: List[Violation]) -> None:
+        """
+        Attach a mock VLM explanation to evidence for borderline cases.
+        """
+        explanation = self._vlm_reasoning_stub()
+        for violation in violations:
+            evidence = Evidence(
+                evidence_id=str(uuid.uuid4()),
+                violation_id=violation.violation_id,
+                signal_id="vlm_stub",
+                evidence_type="vlm_reasoning_stub",
+                description="Mock VLM reasoning for borderline context",
+                data={"explanation": explanation}
+            )
+            violation.evidence.append(evidence)
+
+    def _vlm_reasoning_stub(self) -> str:
+        """
+        Return a mock VLM explanation string.
+        """
+        return "Context may be required to confirm whether the claim is misleading."
     
     def _load_rules(self) -> dict:
         """

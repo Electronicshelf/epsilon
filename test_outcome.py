@@ -350,13 +350,17 @@ def test_confidence_routing_and_vlm_stub():
 
     assert outcome.metadata.get("routing") == "borderline_requires_context"
 
-    # Ensure VLM stub evidence was attached
-    has_vlm_stub = any(
+    # VLM should only be attached for borderline (non-rejected) cases.
+    # If the outcome is clearly rejected, VLM must not be called/attached.
+    has_vlm = any(
         ev.evidence_type == "vlm_reasoning_stub"
         for v in outcome.violations
         for ev in v.evidence
     )
-    assert has_vlm_stub, "Expected VLM reasoning stub evidence"
+    if outcome.verdict == Verdict.LIKELY_REJECTED or outcome.risk_score >= 0.7:
+        assert not has_vlm, "Did not expect VLM evidence for clearly rejected outcome"
+    else:
+        assert has_vlm, "Expected VLM reasoning evidence for borderline outcome"
 
     print("\n✅ PASSED")
     return True

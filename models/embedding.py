@@ -37,6 +37,7 @@ _text_embedding_cache: dict[str, np.ndarray] = {}
 # Regulations to compare image against: (name, text). Used for similarity signals.
 REGULATION_TEXTS: List[Tuple[str, str]] = [
     ("misleading_claims", "misleading or exaggerated advertising claims"),
+    ("medical_health_claims", "unsubstantiated or guaranteed medical or health claims"),
 ]
 SIMILARITY_THRESHOLD = 0.6
 EMBEDDING_MODEL_NAME = "siglip"

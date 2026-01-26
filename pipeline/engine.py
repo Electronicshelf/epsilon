@@ -78,9 +78,8 @@ class CompliancePipeline:
         # Step 6: Generate fix suggestions
         fix_suggestions = self._generate_fix_suggestions(violations)
 
-        # Step 6.5: VLM escalation stub for borderline cases
-        if routing_flag == "borderline_requires_context":
-            self._attach_vlm_reasoning_stub(violations)
+        # Step 6.5: VLM escalation (API) for borderline cases only
+        self._maybe_attach_vlm_reasoning(asset, signals, violations, routing_flag, verdict, risk_score)
         
         # Step 7: Create outcome
         outcome = Outcome(
@@ -109,8 +108,24 @@ class CompliancePipeline:
         signals.extend(ocr_signals)
         
         # Run vision models
-        object_signals = self.vision_model.detect_objects(asset.image_data)
-        signals.extend(object_signals)
+        object_detections = self.vision_model.detect_objects(asset.image_data)
+        for det in object_detections:
+            bbox = det.get("bbox")
+            bounding_box = None
+            if isinstance(bbox, list) and len(bbox) == 4:
+                bounding_box = {"x": bbox[0], "y": bbox[1], "width": bbox[2], "height": bbox[3]}
+
+            signals.append(
+                Signal(
+                    signal_id=str(uuid.uuid4()),
+                    signal_type=SignalType.OBJECT,
+                    source_model=det.get("model", "grounding_dino"),
+                    confidence=float(det.get("confidence", 0.0)),
+                    raw_data=det,
+                    bounding_box=bounding_box,
+                    detected_at=datetime.now(),
+                )
+            )
         
         face_signals = self.vision_model.detect_faces(asset.image_data)
         signals.extend(face_signals)
@@ -147,11 +162,24 @@ class CompliancePipeline:
         
         # Check text signals against all rules
         text_signals = [s for s in signals if s.signal_type == SignalType.TEXT]
-        embedding_signals = [
+        vision_object_signals = [
             s for s in signals
-            if s.raw_data.get("type") == "image_embedding_similarity"
-            and s.raw_data.get("regulation") == "misleading_claims"
+            if s.raw_data.get("type") == "vision_object"
         ]
+        embedding_signals_by_regulation = {}
+        for s in signals:
+            if s.raw_data.get("type") != "image_embedding_similarity":
+                continue
+            reg = s.raw_data.get("regulation")
+            if not reg:
+                continue
+            embedding_signals_by_regulation.setdefault(reg, []).append(s)
+
+        # Vision → policy evidence mapping (supporting evidence ONLY)
+        vision_support_map = {
+            "medical_health_claims": {"pill", "medicine", "syringe"},
+            "misleading_exaggerated_claims": {"money", "cash", "banknote"},
+        }
         
         # Group violations by rule_id to avoid duplicates
         # Each rule can have multiple matching signals
@@ -181,7 +209,7 @@ class CompliancePipeline:
                     violation_id="",  # Will be set after violation creation
                     signal_id=signal.signal_id,
                     evidence_type="text_match",
-                    description=f"Misleading claim detected: '{matched_term}'",
+                    description=f"{rule['name']} detected: '{matched_term}'",
                     data={
                         "matched_text": signal.raw_data.get("text", ""),
                         "matched_term": matched_term,
@@ -194,8 +222,8 @@ class CompliancePipeline:
                 evidence_list.append(evidence)
 
             # Add embedding evidence as low-weight support only
-            if rule_id == "misleading_exaggerated_claims" and embedding_signals:
-                for signal in embedding_signals:
+            if rule_id == "misleading_exaggerated_claims":
+                for signal in embedding_signals_by_regulation.get("misleading_claims", []):
                     evidence = Evidence(
                         evidence_id=str(uuid.uuid4()),
                         violation_id="",  # Will be set after violation creation
@@ -210,6 +238,57 @@ class CompliancePipeline:
                         }
                     )
                     evidence_list.append(evidence)
+            if rule_id == "medical_health_claims":
+                for signal in embedding_signals_by_regulation.get("medical_health_claims", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",  # Will be set after violation creation
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+
+            # Add vision evidence as supporting evidence ONLY after OCR already matched.
+            # Also apply a tiny confidence boost to OCR evidence when relevant vision objects appear.
+            if rule_id in vision_support_map and vision_object_signals:
+                allowed = vision_support_map[rule_id]
+                matched_vision = [
+                    s for s in vision_object_signals
+                    if str(s.raw_data.get("label", "")).strip().lower() in allowed
+                ]
+                if matched_vision:
+                    # Small capped boost to text-match confidence (does not change logic; only enriches)
+                    for ev in evidence_list:
+                        if ev.evidence_type != "text_match":
+                            continue
+                        base = float(ev.data.get("confidence", 0.0))
+                        ev.data["confidence"] = min(1.0, base + 0.1)
+
+                    # Attach vision signals as evidence entries (supporting only)
+                    for s in matched_vision:
+                        evidence_list.append(
+                            Evidence(
+                                evidence_id=str(uuid.uuid4()),
+                                violation_id="",  # Will be set after violation creation
+                                signal_id=s.signal_id,
+                                evidence_type="vision_object",
+                                description=f"Vision object support: {s.raw_data.get('label')}",
+                                data={
+                                    "label": s.raw_data.get("label"),
+                                    "confidence": 1.0,  # evidence weight; detection confidence is in signal_confidence
+                                    "signal_confidence": s.confidence,
+                                    "bbox": s.raw_data.get("bbox"),
+                                    "model": s.raw_data.get("model", "grounding_dino"),
+                                },
+                            )
+                        )
             
             # Calculate overall confidence for the violation
             # Use average of individual match confidences, weighted by signal confidence
@@ -250,6 +329,13 @@ class CompliancePipeline:
             Tuple of (matched_term, confidence) if match found, None otherwise
             confidence is 0.0 to 1.0
         """
+        # Optional: require some context terms be present (used for medical/health claims).
+        context_terms = rule.get("context_terms", [])
+        if context_terms:
+            text_l = text.lower()
+            if not any(t.lower() in text_l for t in context_terms):
+                return None
+
         # First check patterns (more specific, higher priority)
         patterns = rule.get("patterns", [])
         for pattern_info in patterns:
@@ -468,27 +554,76 @@ class CompliancePipeline:
         
         return unique_suggestions[:5]  # Limit to 5 suggestions
 
-    def _attach_vlm_reasoning_stub(self, violations: List[Violation]) -> None:
+    def _maybe_attach_vlm_reasoning(
+        self,
+        asset: Asset,
+        signals: List[Signal],
+        violations: List[Violation],
+        routing_flag: Optional[str],
+        verdict: Verdict,
+        risk_score: float,
+    ) -> None:
         """
-        Attach a mock VLM explanation to evidence for borderline cases.
+        Call the VLM only when:
+        - routing_flag == "borderline_requires_context"
+        - at least one OCR-based violation exists (text_match evidence)
+        - NOT for clean ads or clearly rejected ads
         """
-        explanation = self._vlm_reasoning_stub()
-        for violation in violations:
-            evidence = Evidence(
-                evidence_id=str(uuid.uuid4()),
-                violation_id=violation.violation_id,
-                signal_id="vlm_stub",
-                evidence_type="vlm_reasoning_stub",
-                description="Mock VLM reasoning for borderline context",
-                data={"explanation": explanation}
-            )
-            violation.evidence.append(evidence)
+        if routing_flag != "borderline_requires_context":
+            return
+        if not violations:
+            return
+        if verdict == Verdict.LIKELY_REJECTED or risk_score >= 0.7:
+            return
 
-    def _vlm_reasoning_stub(self) -> str:
-        """
-        Return a mock VLM explanation string.
-        """
-        return "Context may be required to confirm whether the claim is misleading."
+        # Ensure there's at least one OCR-triggered violation (not vision-only / embedding-only)
+        has_ocr_violation = any(
+            any(ev.evidence_type == "text_match" for ev in v.evidence)
+            for v in violations
+        )
+        if not has_ocr_violation:
+            return
+
+        # Collect OCR texts + vision objects for prompt
+        ocr_texts = [
+            s.raw_data.get("text", "")
+            for s in signals
+            if s.signal_type == SignalType.TEXT and s.raw_data.get("text")
+        ]
+        vision_objects = [
+            s.raw_data
+            for s in signals
+            if s.raw_data.get("type") == "vision_object"
+        ]
+
+        # Pick one policy to analyze (first OCR-based violation)
+        policy_id = next(
+            (v.rule_id for v in violations if any(ev.evidence_type == "text_match" for ev in v.evidence)),
+            violations[0].rule_id,
+        )
+
+        try:
+            explanation = self.vlm_model.analyze_image_context(
+                image_bytes=asset.image_data,
+                ocr_texts=ocr_texts,
+                vision_objects=vision_objects,
+                policy_id=policy_id,
+            )
+        except Exception:
+            explanation = "VLM analysis unavailable at this time."
+
+        # Attach as evidence only (no enforcement change)
+        for violation in violations:
+            violation.evidence.append(
+                Evidence(
+                    evidence_id=str(uuid.uuid4()),
+                    violation_id=violation.violation_id,
+                    signal_id="vlm_api",
+                    evidence_type="vlm_reasoning_stub",
+                    description="VLM context analysis (borderline only)",
+                    data={"explanation": explanation},
+                )
+            )
     
     def _load_rules(self) -> dict:
         """
@@ -532,6 +667,60 @@ class CompliancePipeline:
                         "description": "Percentage-based guarantees"
                     }
                 ]
+            },
+            "medical_health_claims": {
+                "name": "Medical / Health Claims",
+                "severity": "HIGH",
+                "description": "Detects unsubstantiated or guaranteed medical/health claims in ad images (OCR-driven)",
+                "type": "keyword",
+                # Require explicit medical/health context terms to reduce false positives
+                "context_terms": [
+                    # Conditions / outcomes
+                    "pain", "chronic", "inflammation", "symptom", "disease", "condition",
+                    # Common health domains
+                    "arthritis", "diabetes", "asthma", "eczema", "acne", "psoriasis",
+                    "blood pressure", "cholesterol", "heart", "immune",
+                    # Mental health
+                    "anxiety", "depression", "stress", "sleep", "insomnia",
+                    # Weight loss / body outcomes
+                    "weight", "weight loss", "lose", "lbs", "lb", "kg", "kgs", "pounds",
+                ],
+                "prohibited_terms": [
+                    "cure",
+                    "treat",
+                    "heal",
+                    "reverse",
+                    "guaranteed results",
+                    "100% effective",
+                    "clinically proven",
+                ],
+                "patterns": [
+                    {
+                        "pattern": r"\b(cure|treat|heal|reverse)\b",
+                        "confidence": 0.9,
+                        "description": "Medical claim verbs (cure/treat/heal/reverse)",
+                    },
+                    {
+                        "pattern": r"\bguaranteed\s+results?\b",
+                        "confidence": 0.9,
+                        "description": "Guaranteed medical/health results",
+                    },
+                    {
+                        "pattern": r"\bclinically\s+proven\b",
+                        "confidence": 0.85,
+                        "description": "Clinically proven claim (requires medical context)",
+                    },
+                    {
+                        "pattern": r"\blose\s+\d+\s*(lbs|lb|kg|kgs|pounds?)\s+in\s+\d+\s+days?\b",
+                        "confidence": 0.95,
+                        "description": "Weight loss claim with timeframe",
+                    },
+                    {
+                        "pattern": r"\b100%\s+effective\b",
+                        "confidence": 0.95,
+                        "description": "Absolute effectiveness guarantee",
+                    },
+                ],
             },
             "biopharma_prohibited_claims": {
                 "name": "Prohibited Medical Claims",

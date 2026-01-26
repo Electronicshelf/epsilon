@@ -9,7 +9,7 @@ This repository follows a clean, minimal architecture with clear separation of c
 ```
 api/          - Request/response handling (Flask routes)
 pipeline/     - Orchestration: signals → violations → outcome
-models/       - Wrappers for vision/OCR/VLM models (placeholders)
+models/       - Wrappers for OCR / vision / embeddings / VLM
 schemas/      - Internal data models (Asset, Signal, Violation, Evidence, Outcome)
 webapp/       - Thin frontend client (no business logic)
 ```
@@ -22,7 +22,7 @@ Image Upload → API → Pipeline → Models → Signals → Rule Checking → V
 
 1. **API** receives image upload
 2. **Pipeline** orchestrates the analysis:
-   - Extracts signals using **Models** (OCR, Vision, VLM)
+   - Extracts signals using **Models** (OCR, Vision, Embeddings, VLM)
    - Checks signals against compliance rules
    - Generates violations with evidence
    - Calculates risk score and status
@@ -43,6 +43,10 @@ python app.py
 ```
 
 The API will start on `http://localhost:5000`
+
+## Configuration
+
+- **`VLM_API_KEY`**: Optional. If set, GPT‑4o Vision is used to attach a short explainability note **only** when routing is `borderline_requires_context` and an OCR-triggered violation already exists. If unset or the API fails, a fallback message is attached.
 
 ### 3. Use the Web App
 
@@ -144,7 +148,12 @@ epsilon/
 - **API-First**: Backend is a REST API, frontend is a consumer
 - **Pipeline-Based**: Clear flow from signals to violations to outcome
 - **Minimal**: No production infra, auth, or dashboards
-- **Placeholder Models**: Model wrappers are placeholders for actual implementations
+- **OCR is primary**: Violations are triggered by OCR text matches (rules). Vision/embeddings/VLM are supporting evidence only.
+- **Model integrations (current)**:
+  - OCR: Tesseract (real)
+  - Vision: Grounding DINO object detection (real; supporting evidence only)
+  - Embeddings: SigLIP (real; optional similarity signals; supporting evidence only)
+  - VLM: GPT‑4o Vision API (borderline-only explainability; never triggers violations)
 - **Clear Separation**: Business logic in pipeline, not in API or webapp
 
 ## Data Models
@@ -159,6 +168,7 @@ epsilon/
 
 Rules are defined in `pipeline/engine.py` and check for:
 - Prohibited text claims (e.g., "cure", "guaranteed")
+- Medical / health claims (`medical_health_claims`) (OCR-triggered; supporting evidence may include vision/embedding signals)
 - Restricted objects/scenes
 - Brand usage violations
 - Contextual violations
@@ -172,7 +182,7 @@ The codebase is designed to be:
 
 ## Future Enhancements
 
-- Replace placeholder models with actual OCR/Vision/VLM implementations
+- Expand policies and improve rule matching
 - Load rules from database or config file
 - Add image preview with violation overlays
 - Support batch processing
@@ -180,7 +190,7 @@ The codebase is designed to be:
 
 ## Notes
 
-- Models are currently placeholders that return empty results
+- Vision/embedding/VLM signals are used for **supporting evidence only** and must not create violations by themselves
 - Rules are hardcoded but structured for easy extension
 - Web app is a thin client with no business logic
 - All compliance logic lives in the backend pipeline

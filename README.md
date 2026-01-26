@@ -42,7 +42,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-The API will start on `http://localhost:5000`
+The API will start on `http://localhost:5001`
 
 ## Configuration
 
@@ -50,7 +50,7 @@ The API will start on `http://localhost:5000`
 
 ### 3. Use the Web App
 
-Open `webapp/index.html` in your browser and upload an image.
+Open `webapp/index.html` in your browser, upload an image, and submit to the v1 endpoint. The UI is viewer-only and renders the API JSON (including OCR/vision bbox overlays when present).
 
 ### 4. Test the API
 
@@ -63,6 +63,8 @@ python test_api.py
 - `GET /` - API information
 - `GET /health` - Health check
 - `POST /analyze` - Analyze image for compliance
+  - Form data: `image` (file), `domain` (optional: biopharma, finance, ads)
+- `POST /v1/ads/meta/image/check` - Check image compliance (v1)
   - Form data: `image` (file), `domain` (optional: biopharma, finance, ads)
 - `GET /rules` - List available compliance rules
 
@@ -82,12 +84,12 @@ python test_with_real_image.py path/to/your/image.jpg --domain biopharma
 
 ```bash
 # V1 API endpoint
-curl -X POST http://localhost:5000/v1/ads/meta/image/check \
+curl -X POST http://localhost:5001/v1/ads/meta/image/check \
   -F "image=@your_image.jpg" \
   -F "domain=ads" | jq .
 
 # Legacy endpoint
-curl -X POST http://localhost:5000/analyze \
+curl -X POST http://localhost:5001/analyze \
   -F "image=@your_image.jpg" \
   -F "domain=biopharma"
 ```
@@ -99,7 +101,7 @@ import requests
 
 with open('image.jpg', 'rb') as f:
     response = requests.post(
-        'http://localhost:5000/v1/ads/meta/image/check',
+        'http://localhost:5001/v1/ads/meta/image/check',
         files={'image': f},
         data={'domain': 'ads'}
     )
@@ -115,7 +117,8 @@ print(f"Violations: {len(result['violations'])}")
 1. Open `webapp/index.html` in your browser
 2. Upload an image
 3. Select domain
-4. Click "Analyze Compliance"
+4. Click "Analyze Ad"
+5. Inspect verdict/risk/violations and evidence (OCR + vision bbox overlays when available)
 
 ## Project Structure
 

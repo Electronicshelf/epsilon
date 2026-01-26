@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SentriLens - Image Compliance Checker</title>
+    <title>SentriLens - Compliance Results Viewer</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
@@ -16,11 +16,7 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        h1 {
-            color: #667eea;
-            text-align: center;
-            margin-bottom: 10px;
-        }
+        h1 { color: #667eea; text-align: center; margin-bottom: 10px; }
         .subtitle {
             text-align: center;
             color: #666;
@@ -76,17 +72,67 @@
             background: #ccc;
             cursor: not-allowed;
         }
+        .grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 18px;
+            align-items: start;
+        }
+        @media (max-width: 900px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+        .panel {
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 10px;
+            padding: 14px;
+        }
+        .panel h2, .panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #222;
+        }
+        .image-stage {
+            position: relative;
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #eee;
+            background: #fafafa;
+        }
         #preview {
-            max-width: 100%;
-            max-height: 400px;
-            margin: 20px 0;
-            border-radius: 8px;
-            display: none;
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+        .box {
+            position: absolute;
+            border: 2px solid rgba(255, 0, 0, 0.85);
+            background: rgba(255, 0, 0, 0.08);
+            box-sizing: border-box;
+        }
+        .box.ocr { border-color: rgba(0, 123, 255, 0.85); background: rgba(0, 123, 255, 0.08); }
+        .box.vision { border-color: rgba(255, 193, 7, 0.95); background: rgba(255, 193, 7, 0.10); }
+        .box-label {
+            position: absolute;
+            left: 0;
+            top: -18px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 11px;
+            background: rgba(0, 0, 0, 0.75);
+            color: #fff;
+            white-space: nowrap;
         }
         #result {
-            margin-top: 30px;
-            padding: 20px;
-            border-radius: 8px;
+            margin-top: 16px;
+            padding: 14px;
+            border-radius: 10px;
             display: none;
         }
         .status-COMPLIANT { background: #d4edda; border-left: 4px solid #28a745; }
@@ -135,12 +181,31 @@
             border-radius: 5px;
             margin-top: 20px;
         }
+        .pill {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            border: 1px solid #ddd;
+            background: #fff;
+            color: #333;
+            margin-right: 6px;
+        }
+        .pill.green { border-color: #28a745; color: #155724; background: #d4edda; }
+        .pill.yellow { border-color: #ffc107; color: #856404; background: #fff3cd; }
+        .pill.red { border-color: #dc3545; color: #721c24; background: #f8d7da; }
+        .muted { color: #666; font-size: 12px; }
+        .toggle-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .toggle-row label { margin: 0; font-weight: 600; font-size: 12px; }
+        .toggle-row input { margin-right: 6px; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; font-weight: 700; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔍 SentriLens Compliance Checker</h1>
-        <p class="subtitle">Upload an image to check for Meta advertising compliance violations</p>
+        <h1>SentriLens Compliance Viewer</h1>
+        <p class="subtitle">Viewer-only UI for the existing compliance API results</p>
 
         <label for="domain">Domain:</label>
         <select id="domain">
@@ -150,23 +215,51 @@
         </select>
 
         <div class="upload-area" id="uploadArea">
-            <p>📷 Click to upload or drag and drop an image</p>
+            <p>Click to upload or drag and drop an image</p>
             <input type="file" id="imageInput" accept="image/*">
         </div>
 
-        <img id="preview" alt="Preview">
+        <div class="grid" style="margin-top: 14px;">
+            <div class="panel">
+                <h2>Image</h2>
+                <div class="muted">Overlays are drawn from API evidence bounding boxes.</div>
+                <div style="height: 10px;"></div>
+                <div class="toggle-row">
+                    <label><input type="checkbox" id="toggleOcr" checked>OCR boxes</label>
+                    <label><input type="checkbox" id="toggleVision" checked>Vision boxes</label>
+                </div>
+                <div style="height: 10px;"></div>
+                <div class="image-stage" id="imageStage" style="display:none;">
+                    <img id="preview" alt="Preview">
+                    <div class="overlay" id="overlay"></div>
+                </div>
+            </div>
 
-        <button id="analyzeBtn" onclick="analyzeImage()" disabled>🔍 Analyze Compliance</button>
+            <div class="panel">
+                <h2>Submit</h2>
+                <div class="muted">Calls: <code>http://localhost:5001/v1/ads/meta/image/check</code></div>
+                <button id="analyzeBtn" onclick="analyzeImage()" disabled>Analyze Ad</button>
+                <div id="result"></div>
+            </div>
+        </div>
 
-        <div id="result"></div>
     </div>
 
     <script>
+        const API_URL = 'http://localhost:5001/v1/ads/meta/image/check';
+
         const uploadArea = document.getElementById('uploadArea');
         const imageInput = document.getElementById('imageInput');
         const preview = document.getElementById('preview');
         const analyzeBtn = document.getElementById('analyzeBtn');
         const resultDiv = document.getElementById('result');
+        const imageStage = document.getElementById('imageStage');
+        const overlay = document.getElementById('overlay');
+        const toggleOcr = document.getElementById('toggleOcr');
+        const toggleVision = document.getElementById('toggleVision');
+
+        let lastResponse = null;
+        let selectedViolationId = null;
 
         // File input handling
         uploadArea.addEventListener('click', () => imageInput.click());
@@ -196,9 +289,12 @@
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     preview.src = event.target.result;
-                    preview.style.display = 'block';
+                    imageStage.style.display = 'block';
                     analyzeBtn.disabled = false;
                     resultDiv.style.display = 'none';
+                    clearOverlay();
+                    lastResponse = null;
+                    selectedViolationId = null;
                 };
                 reader.readAsDataURL(file);
             }
@@ -214,7 +310,7 @@
             }
 
             // Show loading
-            resultDiv.innerHTML = '<div class="loading">⏳ Analyzing image... This may take a moment.</div>';
+            resultDiv.innerHTML = '<div class="loading">Analyzing image... this may take a moment.</div>';
             resultDiv.style.display = 'block';
             resultDiv.className = '';
             analyzeBtn.disabled = true;
@@ -224,23 +320,30 @@
                 formData.append('image', file);
                 formData.append('domain', domain);
 
-                const response = await fetch('http://localhost:5001/analyze', {
+                const response = await fetch(API_URL, {
                     method: 'POST',
                     body: formData
                 });
 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || 'Analysis failed');
+                    let errText = 'Analysis failed';
+                    try {
+                        const error = await response.json();
+                        errText = error.message || error.error || errText;
+                    } catch (_) {}
+                    throw new Error(errText);
                 }
 
                 const data = await response.json();
+                lastResponse = data;
+                selectedViolationId = (data.violations && data.violations[0] && data.violations[0].violation_id) || null;
                 displayResult(data);
+                renderOverlayForSelectedViolation();
 
             } catch (error) {
                 resultDiv.innerHTML = `
                     <div class="error">
-                        <strong>❌ Error:</strong> ${error.message}<br>
+                        <strong>Error:</strong> ${escapeHtml(error.message)}<br>
                         <small>Make sure the API is running: <code>python app.py</code></small>
                     </div>
                 `;
@@ -250,77 +353,219 @@
         }
 
         function displayResult(data) {
-            resultDiv.className = `status-${data.status}`;
+            resultDiv.className = `status-${data.status || ''}`;
             
-            let html = `
-                <h2>📊 Compliance Analysis Results</h2>
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0;">
-                    <div>
-                        <strong>Status:</strong> ${getStatusEmoji(data.status)} ${data.status.replace('_', ' ')}
-                    </div>
-                    <div>
-                        <strong>Risk Level:</strong> ${getRiskEmoji(data.risk_level)} ${data.risk_level}
-                    </div>
-                    <div>
-                        <strong>Risk Score:</strong> ${data.risk_score} / 1.0
-                    </div>
-                    <div>
-                        <strong>Violations:</strong> ${data.violation_count}
-                    </div>
+            const verdict = data.verdict || 'unknown';
+            const riskScore = typeof data.risk_score === 'number' ? data.risk_score : null;
+            const status = data.status || 'UNKNOWN';
+            const violations = Array.isArray(data.violations) ? data.violations : [];
+
+            const verdictPill = verdict === 'likely_approved'
+                ? 'green'
+                : verdict === 'borderline'
+                    ? 'yellow'
+                    : verdict === 'likely_rejected'
+                        ? 'red'
+                        : '';
+
+            let html = `<h3>Result</h3>`;
+            html += `
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin: 10px 0;">
+                    <span class="pill ${verdictPill}">Verdict: ${escapeHtml(verdict)}</span>
+                    <span class="pill">Status: ${escapeHtml(status)}</span>
+                    <span class="pill">Risk score: ${riskScore === null ? 'n/a' : riskScore.toFixed(2)}</span>
+                    <span class="pill">Violations: ${violations.length}</span>
                 </div>
             `;
 
-            if (data.violations && data.violations.length > 0) {
-                html += '<h3>⚠️ Violations Found:</h3>';
-                data.violations.forEach(v => {
+            if (violations.length) {
+                const names = violations.map(v => v.rule_name || v.rule_id || 'unknown');
+                html += `<div class="muted">Triggered policies: ${escapeHtml(names.join(', '))}</div>`;
+            } else {
+                html += `<div class="muted">No violations.</div>`;
+            }
+
+            if (violations.length > 0) {
+                html += `<div style="height: 10px;"></div><h3>Violations</h3>`;
+                violations.forEach(v => {
+                    const vid = v.violation_id || '';
+                    const sev = v.severity || 'UNKNOWN';
+                    const ruleId = v.rule_id || 'unknown_policy';
+                    const ruleName = v.rule_name || ruleId;
+                    const evidence = Array.isArray(v.evidence) ? v.evidence : [];
+
+                    const confFromFirst = (evidence[0] && evidence[0].data && typeof evidence[0].data.confidence === 'number')
+                        ? evidence[0].data.confidence
+                        : null;
+
+                    const vlmEv = evidence.find(e => e.evidence_type === 'vlm_reasoning_stub' && e.data && e.data.explanation);
+                    const explanation = vlmEv && vlmEv.data && vlmEv.data.explanation ? String(vlmEv.data.explanation) : null;
+
                     html += `
-                        <div class="violation">
+                        <div class="violation" style="border-left-color:${sev === 'HIGH' || sev === 'CRITICAL' ? '#dc3545' : '#ffc107'}">
                             <div class="violation-header">
-                                <strong>${v.rule_name}</strong>
-                                <span class="severity severity-${v.severity}">${v.severity}</span>
+                                <button
+                                  style="background:transparent;border:none;padding:0;text-align:left;cursor:pointer;font-weight:700;color:#222;"
+                                  onclick="selectViolation('${escapeAttr(vid)}')"
+                                  title="Select to show bounding boxes on the image"
+                                >
+                                  ${escapeHtml(ruleName)}
+                                </button>
+                                <span class="severity severity-${escapeAttr(sev)}">${escapeHtml(sev)}</span>
                             </div>
-                            <p>${v.description}</p>
-                            ${v.evidence && v.evidence.length > 0 ? `
-                                <div style="margin-top: 10px;">
-                                    <strong>Evidence:</strong>
-                                    ${v.evidence.map(e => `
-                                        <div class="evidence">
-                                            ${e.description}
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
+                            <div class="muted">Policy ID: <code>${escapeHtml(ruleId)}</code></div>
+                            <div class="muted">Confidence (from evidence): ${confFromFirst === null ? 'n/a' : confFromFirst.toFixed(2)}</div>
+                            <p>${escapeHtml(v.description || '')}</p>
+
+                            ${explanation ? `
+                              <details open>
+                                <summary>Contextual Explanation (VLM)</summary>
+                                <div class="evidence">${escapeHtml(explanation)}</div>
+                              </details>
+                            ` : ``}
+
+                            <details>
+                              <summary>Evidence</summary>
+                              ${renderEvidenceGroups(evidence)}
+                            </details>
                         </div>
                     `;
                 });
-            } else {
-                html += '<p style="color: green; font-weight: bold;">✅ No violations detected! Image appears compliant.</p>';
             }
 
-            if (data.signals_count > 0) {
-                html += `<p style="color: #666; font-size: 13px; margin-top: 15px;">Detected ${data.signals_count} signals from image analysis.</p>`;
+            if (data.metadata && data.metadata.routing) {
+                html += `<div class="muted" style="margin-top:10px;">Routing: <code>${escapeHtml(String(data.metadata.routing))}</code></div>`;
             }
 
             resultDiv.innerHTML = html;
         }
 
-        function getStatusEmoji(status) {
-            const emojis = {
-                'COMPLIANT': '✅',
-                'NON_COMPLIANT': '❌',
-                'REVIEW_REQUIRED': '⚠️'
-            };
-            return emojis[status] || '❓';
+        function renderEvidenceGroups(evidence) {
+            const ocr = evidence.filter(e => e.evidence_type === 'text_match');
+            const vision = evidence.filter(e => e.evidence_type === 'vision_object');
+            const emb = evidence.filter(e => e.evidence_type === 'image_embedding_similarity');
+            const vlm = evidence.filter(e => e.evidence_type === 'vlm_reasoning_stub');
+
+            let html = '';
+            if (ocr.length) {
+                html += `<h4 style="margin:10px 0 6px 0;">OCR Evidence</h4>`;
+                html += ocr.map(e => {
+                    const t = e.data && e.data.ocr_text ? String(e.data.ocr_text) : '';
+                    const b = e.data && e.data.bbox ? e.data.bbox : null;
+                    return `<div class="evidence"><div><strong>Text:</strong> ${escapeHtml(t)}</div>${b ? `<div class="muted">BBox: ${escapeHtml(JSON.stringify(b))}</div>` : ''}</div>`;
+                }).join('');
+            }
+            if (vision.length) {
+                html += `<h4 style="margin:10px 0 6px 0;">Vision Evidence</h4>`;
+                html += vision.map(e => {
+                    const label = e.data && e.data.label ? String(e.data.label) : '';
+                    const conf = (e.data && typeof e.data.signal_confidence === 'number') ? e.data.signal_confidence : null;
+                    const bbox = e.data && e.data.bbox ? e.data.bbox : null;
+                    const model = e.data && e.data.model ? String(e.data.model) : '';
+                    return `<div class="evidence"><div><strong>Object:</strong> ${escapeHtml(label)}${conf === null ? '' : ` <span class="muted">(conf ${conf.toFixed(2)})</span>`}</div>${bbox ? `<div class="muted">BBox: ${escapeHtml(JSON.stringify(bbox))}</div>` : ''}${model ? `<div class="muted">Model: ${escapeHtml(model)}</div>` : ''}</div>`;
+                }).join('');
+            }
+            if (emb.length) {
+                html += `<h4 style="margin:10px 0 6px 0;">Embedding Evidence</h4>`;
+                html += emb.map(e => {
+                    const score = (e.data && typeof e.data.score === 'number') ? e.data.score : null;
+                    const model = e.data && e.data.model ? String(e.data.model) : '';
+                    const reg = e.data && e.data.regulation ? String(e.data.regulation) : null;
+                    return `<div class="evidence"><div><strong>Regulation:</strong> ${escapeHtml(reg || '(not provided)')}</div><div><strong>Score:</strong> ${score === null ? 'n/a' : score.toFixed(3)}</div>${model ? `<div class="muted">Model: ${escapeHtml(model)}</div>` : ''}</div>`;
+                }).join('');
+            }
+            if (vlm.length) {
+                html += `<h4 style="margin:10px 0 6px 0;">VLM Reasoning</h4>`;
+                html += vlm.map(e => {
+                    const ex = e.data && e.data.explanation ? String(e.data.explanation) : '';
+                    return `<div class="evidence">${escapeHtml(ex)}</div>`;
+                }).join('');
+            }
+            if (!html) {
+                html = `<div class="muted">No evidence provided.</div>`;
+            }
+            return html;
         }
 
-        function getRiskEmoji(level) {
-            const emojis = {
-                'LOW': '✅',
-                'MEDIUM': '⚠️',
-                'HIGH': '❌',
-                'CRITICAL': '🚨'
-            };
-            return emojis[level] || '❓';
+        function selectViolation(violationId) {
+            selectedViolationId = violationId || null;
+            renderOverlayForSelectedViolation();
+        }
+
+        function clearOverlay() {
+            overlay.innerHTML = '';
+        }
+
+        function getSelectedViolation() {
+            if (!lastResponse || !Array.isArray(lastResponse.violations) || !selectedViolationId) return null;
+            return lastResponse.violations.find(v => String(v.violation_id || '') === String(selectedViolationId)) || null;
+        }
+
+        function renderOverlayForSelectedViolation() {
+            clearOverlay();
+            const v = getSelectedViolation();
+            if (!v || !preview.complete || !preview.naturalWidth) return;
+
+            const showOcr = toggleOcr.checked;
+            const showVision = toggleVision.checked;
+
+            const stageRect = preview.getBoundingClientRect();
+            const scaleX = stageRect.width / preview.naturalWidth;
+            const scaleY = stageRect.height / preview.naturalHeight;
+
+            const evidence = Array.isArray(v.evidence) ? v.evidence : [];
+
+            // OCR bboxes come from evidence.data.bbox as {x,y,width,height}
+            if (showOcr) {
+                evidence.filter(e => e.evidence_type === 'text_match').forEach((e) => {
+                    const bbox = e.data && e.data.bbox ? e.data.bbox : null;
+                    const txt = e.data && e.data.ocr_text ? String(e.data.ocr_text) : '';
+                    if (!bbox || typeof bbox.x !== 'number') return;
+                    addBox('ocr', bbox.x, bbox.y, bbox.width, bbox.height, `OCR: ${txt}`);
+                });
+            }
+
+            // Vision bboxes come from evidence.data.bbox as [x,y,w,h]
+            if (showVision) {
+                evidence.filter(e => e.evidence_type === 'vision_object').forEach((e) => {
+                    const bbox = e.data && e.data.bbox ? e.data.bbox : null;
+                    const label = e.data && e.data.label ? String(e.data.label) : 'object';
+                    if (!Array.isArray(bbox) || bbox.length !== 4) return;
+                    addBox('vision', bbox[0], bbox[1], bbox[2], bbox[3], `Vision: ${label}`);
+                });
+            }
+
+            function addBox(kind, x, y, w, h, label) {
+                const box = document.createElement('div');
+                box.className = `box ${kind}`;
+                box.style.left = `${x * scaleX}px`;
+                box.style.top = `${y * scaleY}px`;
+                box.style.width = `${w * scaleX}px`;
+                box.style.height = `${h * scaleY}px`;
+                const lab = document.createElement('div');
+                lab.className = 'box-label';
+                lab.textContent = label;
+                box.appendChild(lab);
+                overlay.appendChild(box);
+            }
+        }
+
+        preview.addEventListener('load', () => renderOverlayForSelectedViolation());
+        window.addEventListener('resize', () => renderOverlayForSelectedViolation());
+        toggleOcr.addEventListener('change', () => renderOverlayForSelectedViolation());
+        toggleVision.addEventListener('change', () => renderOverlayForSelectedViolation());
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, (m) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[m]));
+        }
+        function escapeAttr(str) {
+            return escapeHtml(str).replace(/`/g, '&#96;');
         }
     </script>
 </body>

@@ -9,8 +9,9 @@ This web app is a **consumer** of the API, not a source of business logic. All c
 ## Features
 
 - **Image Upload**: Upload images via drag-and-drop or file picker
-- **API Integration**: Calls the `/analyze` endpoint with image and domain
-- **Evidence Visualization**: Displays violations, risk scores, and evidence in a clear UI
+- **API Integration**: Calls the v1 endpoint `/v1/ads/meta/image/check` with image and domain
+- **Evidence Visualization**: Displays verdict, risk score, violations, and grouped evidence
+- **BBox Overlays (viewer-only)**: Draws OCR and vision bounding boxes on the image using API evidence fields
 
 ## Architecture
 
@@ -20,7 +21,7 @@ User → Web App → API → Pipeline → Models → Outcome
 
 The web app:
 1. Accepts image uploads
-2. Sends multipart/form-data to `/analyze`
+2. Sends multipart/form-data to `/v1/ads/meta/image/check`
 3. Receives JSON outcome
 4. Renders violations and evidence visually
 
@@ -36,7 +37,7 @@ The web app:
 1. Start the API: `python app.py`
 2. Open `index.html` in a browser
 3. Upload an image and select domain
-4. View compliance results
+4. Click "Analyze Ad" and inspect the returned results
 
 ## Future Enhancements
 

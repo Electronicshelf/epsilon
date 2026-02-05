@@ -182,8 +182,11 @@ Rules are defined in `pipeline/engine.py`. Use `GET /rules` to list them. Curren
 | `gambling` | Restricted Goods | OCR (exceptions: free/fun, informational) |
 | `financial_products_and_guarantees` | Financial | OCR (exceptions: educational) |
 | `cryptocurrency_services` | Financial | OCR (exceptions: informational) |
+| `biopharma_prohibited_claims` | Legacy | OCR |
+| `finance_prohibited_claims` | Legacy | OCR |
+| `ads_prohibited_claims` | Legacy | OCR |
 
-Plus legacy rule IDs (`biopharma_prohibited_claims`, `finance_prohibited_claims`, `ads_prohibited_claims`). Vision and embedding signals attach as supporting evidence where configured; they do not trigger violations except for weapons.
+Vision and embedding signals attach as supporting evidence where configured; they do not trigger violations except for weapons.
 
 ## Development
 

@@ -38,9 +38,26 @@ _text_embedding_cache: dict[str, np.ndarray] = {}
 REGULATION_TEXTS: List[Tuple[str, str]] = [
     ("misleading_claims", "misleading or exaggerated advertising claims"),
     ("medical_health_claims", "unsubstantiated or guaranteed medical or health claims"),
+    ("fraud_scams_deceptive", "fraud scams and deceptive practices financial urgency impersonation"),
+    ("weapons_ammunition_explosives", "weapons ammunition explosives restricted goods"),
+    ("tobacco_nicotine", "tobacco nicotine products vaping restricted"),
+    ("gambling", "gambling betting casino restricted"),
+    ("financial_products_and_guarantees", "financial products guarantees loans investment insurance"),
+    ("cryptocurrency_services", "cryptocurrency crypto bitcoin trading exchange financial"),
 ]
 SIMILARITY_THRESHOLD = 0.6
 EMBEDDING_MODEL_NAME = "siglip"
+
+
+def _extract_embedding_tensor(output) -> "torch.Tensor":
+    """Extract tensor from HF model output (handles BaseModelOutputWithPooling)."""
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        t = output.pooler_output
+    elif hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
+        t = output.last_hidden_state[:, 0, :]  # CLS token
+    else:
+        t = output[0] if hasattr(output, "__getitem__") else output
+    return t
 
 
 def _get_model():
@@ -109,7 +126,10 @@ class EmbeddingSimilarityModel:
         # Image-only: use get_image_features to avoid requiring input_ids
         with torch.no_grad():
             features = self._model.get_image_features(**inputs)
-            embedding = features[0].cpu().numpy()
+            t = _extract_embedding_tensor(features)
+            if t.dim() > 1:
+                t = t[0]
+            embedding = t.detach().cpu().numpy()
         
         # Normalize to unit length
         norm = np.linalg.norm(embedding)
@@ -145,7 +165,8 @@ class EmbeddingSimilarityModel:
         signals: List[Signal] = []
         for name, text_emb in zip(names, text_embs):
             # Cosine similarity (both unit-length): dot product in [-1,1]
-            cos_sim = float(np.dot(image_emb, text_emb))
+            dot_result = np.dot(image_emb, text_emb)
+            cos_sim = float(np.asarray(dot_result).ravel()[0])
             score = max(0.0, min(1.0, (cos_sim + 1.0) / 2.0))
             if score <= SIMILARITY_THRESHOLD:
                 continue
@@ -213,7 +234,9 @@ def encode_regulation_texts(texts: List[str]) -> List[np.ndarray]:
         
         # Text-only: use get_text_features to avoid requiring pixel_values
         with torch.no_grad():
-            text_embeds = model.get_text_features(**inputs).cpu().numpy()
+            out = model.get_text_features(**inputs)
+            t = _extract_embedding_tensor(out)
+            text_embeds = t.detach().cpu().numpy()
         
         # Normalize and cache each embedding
         for idx, (text, embedding) in enumerate(zip(texts_to_encode, text_embeds)):

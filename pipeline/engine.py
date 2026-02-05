@@ -179,6 +179,9 @@ class CompliancePipeline:
         vision_support_map = {
             "medical_health_claims": {"pill", "medicine", "syringe"},
             "misleading_exaggerated_claims": {"money", "cash", "banknote"},
+            "fraud_scams_deceptive": {"money", "cash", "banknote"},
+            "financial_products_and_guarantees": {"money", "cash", "banknote"},
+            "cryptocurrency_services": {"money", "cash", "banknote"},
         }
         
         # Group violations by rule_id to avoid duplicates
@@ -197,11 +200,33 @@ class CompliancePipeline:
                         rule_matches[rule_id] = []
                     rule_matches[rule_id].append((signal, matched_term, confidence))
         
-        # Create violations from matches
-        for rule_id, matches in rule_matches.items():
+        # Vision-primary triggers: rules that can be triggered by vision_object alone
+        vision_triggered_rules = {}  # rule_id -> list of (vision Signal,)
+        for rule_id, rule in self._rules.items():
+            primary_labels = rule.get("vision_primary_labels")
+            if not primary_labels:
+                continue
+            allowed = {str(l).strip().lower() for l in primary_labels}
+            matched = [
+                s for s in vision_object_signals
+                if str(s.raw_data.get("label", "")).strip().lower() in allowed
+            ]
+            if matched:
+                vision_triggered_rules[rule_id] = matched
+        
+        # For vision-primary rules, only create violations when vision fired (not OCR alone)
+        vision_primary_rule_ids = {r for r, rule in self._rules.items() if rule.get("vision_primary_labels")}
+        ocr_triggered_ids = set(rule_matches.keys()) - vision_primary_rule_ids
+        all_violation_rule_ids = ocr_triggered_ids | set(vision_triggered_rules.keys())
+        
+        # Create violations from OCR and/or vision matches
+        for rule_id in all_violation_rule_ids:
+            rule = self._rules[rule_id]
+            matches = rule_matches.get(rule_id, [])
+            vision_signals = vision_triggered_rules.get(rule_id, [])
             rule = self._rules[rule_id]
             
-            # Create evidence for each matching signal
+            # Build evidence: OCR (from rule_matches or secondary for vision-triggered) + vision (if vision-primary)
             evidence_list = []
             for signal, matched_term, confidence in matches:
                 evidence = Evidence(
@@ -220,6 +245,48 @@ class CompliancePipeline:
                     }
                 )
                 evidence_list.append(evidence)
+            # Vision-primary: add vision_object evidence (trigger)
+            for s in vision_signals:
+                evidence_list.append(
+                    Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
+                        signal_id=s.signal_id,
+                        evidence_type="vision_object",
+                        description=f"Prohibited object detected: {s.raw_data.get('label')}",
+                        data={
+                            "label": s.raw_data.get("label"),
+                            "confidence": 1.0,
+                            "signal_confidence": s.confidence,
+                            "bbox": s.raw_data.get("bbox"),
+                            "model": s.raw_data.get("model", "grounding_dino"),
+                        },
+                    )
+                )
+            # Vision-triggered only: attach any OCR matches as secondary evidence
+            if vision_signals and not matches:
+                for signal in text_signals:
+                    text_content = signal.raw_data.get("text", "").lower()
+                    match_result = self._matches_rule(text_content, rule)
+                    if match_result:
+                        matched_term, confidence = match_result
+                        evidence_list.append(
+                            Evidence(
+                                evidence_id=str(uuid.uuid4()),
+                                violation_id="",
+                                signal_id=signal.signal_id,
+                                evidence_type="text_match",
+                                description=f"{rule['name']} (OCR): '{matched_term}'",
+                                data={
+                                    "matched_text": signal.raw_data.get("text", ""),
+                                    "matched_term": matched_term,
+                                    "confidence": confidence,
+                                    "signal_confidence": signal.confidence,
+                                    "ocr_text": signal.raw_data.get("text", ""),
+                                    "bbox": signal.bounding_box,
+                                },
+                            )
+                        )
 
             # Add embedding evidence as low-weight support only
             if rule_id == "misleading_exaggerated_claims":
@@ -243,6 +310,102 @@ class CompliancePipeline:
                     evidence = Evidence(
                         evidence_id=str(uuid.uuid4()),
                         violation_id="",  # Will be set after violation creation
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "fraud_scams_deceptive":
+                for signal in embedding_signals_by_regulation.get("fraud_scams_deceptive", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",  # Will be set after violation creation
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "weapons_ammunition_explosives":
+                for signal in embedding_signals_by_regulation.get("weapons_ammunition_explosives", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "tobacco_nicotine":
+                for signal in embedding_signals_by_regulation.get("tobacco_nicotine", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "gambling":
+                for signal in embedding_signals_by_regulation.get("gambling", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "financial_products_and_guarantees":
+                for signal in embedding_signals_by_regulation.get("financial_products_and_guarantees", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
+                        signal_id=signal.signal_id,
+                        evidence_type="image_embedding_similarity",
+                        description="Embedding similarity support signal",
+                        data={
+                            "score": signal.raw_data.get("score", 0.0),
+                            "model": signal.raw_data.get("model", "clip_stub"),
+                            "confidence": 0.2,
+                            "signal_confidence": signal.confidence,
+                        },
+                    )
+                    evidence_list.append(evidence)
+            if rule_id == "cryptocurrency_services":
+                for signal in embedding_signals_by_regulation.get("cryptocurrency_services", []):
+                    evidence = Evidence(
+                        evidence_id=str(uuid.uuid4()),
+                        violation_id="",
                         signal_id=signal.signal_id,
                         evidence_type="image_embedding_similarity",
                         description="Embedding similarity support signal",
@@ -329,6 +492,17 @@ class CompliancePipeline:
             Tuple of (matched_term, confidence) if match found, None otherwise
             confidence is 0.0 to 1.0
         """
+        # Exceptions: if text matches any exception pattern/term, do not trigger (e.g. smoking cessation).
+        exception_patterns = rule.get("exception_patterns", [])
+        for pat in exception_patterns:
+            if re.search(pat, text, re.IGNORECASE):
+                return None
+        exception_terms = rule.get("exception_terms", [])
+        text_lower = text.lower()
+        for term in exception_terms:
+            if term.lower() in text_lower:
+                return None
+
         # Optional: require some context terms be present (used for medical/health claims).
         context_terms = rule.get("context_terms", [])
         if context_terms:
@@ -742,5 +916,239 @@ class CompliancePipeline:
                 "description": "Prohibited advertising claims",
                 "type": "keyword",
                 "prohibited_terms": ["100% safe", "guaranteed", "miracle"]
-            }
+            },
+            "fraud_scams_deceptive": {
+                "name": "Fraud, Scams, and Deceptive Practices",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: fraud, scams, and deceptive practices (financial deception, urgency tactics, data harvesting, impersonation)",
+                "type": "keyword",
+                "prohibited_terms": [
+                    "guaranteed income",
+                    "guaranteed profit",
+                    "guaranteed returns",
+                    "risk-free profit",
+                    "make money while you sleep",
+                    "passive income",
+                    "act now",
+                    "limited time",
+                    "final notice",
+                    "last chance",
+                    "don't miss out",
+                    "bank details",
+                    "ssn",
+                    "social security number",
+                    "credit card number",
+                    "crypto wallet",
+                    "verify your account",
+                    "account verification",
+                    "account suspended",
+                    "verify immediately",
+                    "official notice",
+                    "government agency",
+                    "support team",
+                    "account compromised",
+                ],
+                "patterns": [
+                    {"pattern": r"guaranteed\s+(profit|income|return)s?", "confidence": 0.92, "description": "Guaranteed financial claims"},
+                    {"pattern": r"risk-free\s+(profit|return|income)", "confidence": 0.92, "description": "Risk-free financial claims"},
+                    {"pattern": r"make\s+money\s+while\s+you\s+sleep", "confidence": 0.95, "description": "Passive/easy money claim"},
+                    {"pattern": r"act\s+now|limited\s+time|final\s+notice|last\s+chance", "confidence": 0.88, "description": "Urgency/pressure tactics"},
+                    {"pattern": r"(bank\s+details?|credit\s+card|ssn|crypto\s+wallet|password)", "confidence": 0.9, "description": "Data harvesting"},
+                    {"pattern": r"(account\s+suspended|verify\s+immediately|official\s+notice)", "confidence": 0.9, "description": "Impersonation/urgency"},
+                ],
+            },
+            "weapons_ammunition_explosives": {
+                "name": "Weapons, Ammunition, Explosives",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: prohibited weapons, ammunition, explosives, and weapon accessories (Restricted Goods)",
+                "type": "keyword",
+                "vision_primary_labels": ["weapon", "gun", "knife", "ammunition", "explosive"],
+                "prohibited_terms": [
+                    "ammunition",
+                    "bullets",
+                    "ammo",
+                    "explosive",
+                    "bomb",
+                    "grenade",
+                    "firearm for sale",
+                    "knife for sale",
+                    "combat knife",
+                ],
+                "patterns": [
+                    {"pattern": r"(buy|sell)\s+gun", "confidence": 0.92, "description": "Gun sale language"},
+                    {"pattern": r"firearm\s+for\s+sale", "confidence": 0.92, "description": "Firearm sale"},
+                    {"pattern": r"knife\s+for\s+sale|combat\s+knife", "confidence": 0.9, "description": "Knife sale/combat"},
+                ],
+            },
+            "tobacco_nicotine": {
+                "name": "Tobacco and Nicotine",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: prohibited promotion of tobacco and nicotine products (Restricted Goods)",
+                "type": "keyword",
+                "prohibited_terms": [
+                    "cigarettes",
+                    "cigars",
+                    "tobacco",
+                    "vape",
+                    "vaping",
+                    "e-cigarette",
+                    "e-cig",
+                    "nicotine products",
+                    "nicotine pouches",
+                    "hookah",
+                    "shisha",
+                ],
+                "patterns": [
+                    {"pattern": r"\b(cigarette|cigar)s?\b", "confidence": 0.9, "description": "Tobacco product"},
+                    {"pattern": r"\btobacco\b", "confidence": 0.9, "description": "Tobacco"},
+                    {"pattern": r"\b(vape|vaping|e-?cigarette)\b", "confidence": 0.9, "description": "Vape/e-cig"},
+                    {"pattern": r"nicotine\s+(products?|pouches?)", "confidence": 0.9, "description": "Nicotine product"},
+                    {"pattern": r"\b(hookah|shisha)\b", "confidence": 0.9, "description": "Hookah/shisha"},
+                ],
+                "exception_patterns": [
+                    r"quit\s+smoking",
+                    r"smoking\s+cessation",
+                    r"nicotine\s+replacement\s+therapy",
+                    r"stop\s+smoking",
+                    r"fda[- ]approved.*(patch|gum|lozenge|therapy)",
+                    r"(patch|gum|lozenge)\s+to\s+quit",
+                ],
+                "exception_terms": [
+                    "quit smoking aid",
+                    "nicotine replacement therapy",
+                    "smoking cessation",
+                    "stop smoking aid",
+                ],
+            },
+            "gambling": {
+                "name": "Gambling and Betting",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: restricted gambling and betting promotions (Restricted Goods)",
+                "type": "keyword",
+                "prohibited_terms": [
+                    "betting",
+                    "sportsbook",
+                    "casino",
+                    "wager",
+                    "odds",
+                    "betting lines",
+                    "poker",
+                    "blackjack",
+                    "roulette",
+                    "win money gambling",
+                    "real money bets",
+                ],
+                "patterns": [
+                    {"pattern": r"\b(betting|sportsbook|casino|wager)\b", "confidence": 0.9, "description": "Gambling/betting"},
+                    {"pattern": r"betting\s+lines?|odds\s+on", "confidence": 0.9, "description": "Betting lines/odds"},
+                    {"pattern": r"\b(poker|blackjack|roulette)\b", "confidence": 0.9, "description": "Casino games"},
+                    {"pattern": r"real\s+money\s+(bet|gambling)", "confidence": 0.92, "description": "Real money gambling"},
+                    {"pattern": r"win\s+money\s+gambling|bet\s+real\s+money", "confidence": 0.92, "description": "Win/bet money"},
+                ],
+                "exception_patterns": [
+                    r"gambling\s+laws?",
+                    r"informational\s+(content|about)",
+                    r"for\s+fun\b",
+                    r"\bfree\s+(to\s+play)?\s*(card\s+)?games?\b",
+                    r"no\s+real\s+money",
+                    r"no\s+purchase\s+necessary",
+                    r"no\s+prizes?",
+                ],
+                "exception_terms": [
+                    "for fun",
+                    "free to play",
+                    "no real money",
+                    "gambling laws",
+                    "informational only",
+                ],
+            },
+            "financial_products_and_guarantees": {
+                "name": "Financial Products and Guarantees",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: restricted financial product promotions and guarantees (Financial Products)",
+                "type": "keyword",
+                "prohibited_terms": [
+                    "credit card",
+                    "payday loan",
+                    "guaranteed approval",
+                    "guaranteed returns",
+                    "guaranteed profits",
+                    "no risk",
+                    "risk-free",
+                    "instant approval",
+                    "pre-approved",
+                    "100% approval",
+                    "everyone qualifies",
+                    "life insurance",
+                    "health insurance",
+                ],
+                "patterns": [
+                    {"pattern": r"\b(credit\s+card|loan|mortgage|payday\s+loan)\b", "confidence": 0.9, "description": "Financial product"},
+                    {"pattern": r"\b(investment|investing|trading|portfolio)\b", "confidence": 0.9, "description": "Investment"},
+                    {"pattern": r"\b(insurance|life\s+insurance|health\s+insurance)\b", "confidence": 0.9, "description": "Insurance"},
+                    {"pattern": r"guaranteed\s+(approval|returns?|profits?)", "confidence": 0.92, "description": "Guarantee"},
+                    {"pattern": r"\b(no\s+risk|risk-free)\b", "confidence": 0.9, "description": "No risk claim"},
+                    {"pattern": r"(instant|pre-?approved)\s+approval|100%\s+approval|everyone\s+qualifies", "confidence": 0.9, "description": "Approval guarantee"},
+                ],
+                "exception_patterns": [
+                    r"learn\s+how\s+\w+",
+                    r"educational\s+(content|about)?",
+                    r"informational\s+(content|only|about)?",
+                    r"financial\s+literacy",
+                    r"how\s+\w+\s+works?",
+                    r"disclosure\s+(only|statement)",
+                    r"what\s+affects\s+\w+",
+                ],
+                "exception_terms": [
+                    "educational content",
+                    "informational only",
+                    "financial literacy",
+                    "for educational purposes",
+                ],
+            },
+            "cryptocurrency_services": {
+                "name": "Cryptocurrency Services",
+                "severity": "HIGH",
+                "description": "Meta Ads policy: restricted promotion of cryptocurrency-related products or services (Financial Products)",
+                "type": "keyword",
+                "prohibited_terms": [
+                    "cryptocurrency",
+                    "crypto trading",
+                    "crypto exchange",
+                    "buy crypto",
+                    "sell crypto",
+                    "trade crypto",
+                    "yield farming",
+                    "token sale",
+                    "nft marketplace",
+                    "crypto wallet",
+                ],
+                "patterns": [
+                    {"pattern": r"\b(cryptocurrency|crypto)\b", "confidence": 0.88, "description": "Crypto term"},
+                    {"pattern": r"\b(bitcoin|ethereum|altcoin)\b", "confidence": 0.9, "description": "Cryptocurrency name"},
+                    {"pattern": r"crypto\s+(trading|exchange)", "confidence": 0.9, "description": "Crypto trading/exchange"},
+                    {"pattern": r"(buy|sell|trade)\s+crypto", "confidence": 0.9, "description": "Buy/sell/trade crypto"},
+                    {"pattern": r"\b(staking|yield\s+farming|token\s+sale|ico)\b", "confidence": 0.9, "description": "Crypto product"},
+                    {"pattern": r"nft\s+marketplace|crypto\s+wallet", "confidence": 0.9, "description": "NFT/crypto wallet"},
+                ],
+                "exception_patterns": [
+                    r"learn\s+how\s+\w+",
+                    r"how\s+(blockchain|crypto)\s+(works?|technology)",
+                    r"educational\s+(content|about)?",
+                    r"informational\s+(content|only|about)?",
+                    r"news\s+(about|on)\b",
+                    r"analysis\s+(of|on)\b",
+                    r"security\s+warning",
+                    r"risk\s+disclosure",
+                    r"why\s+it\s+matters",
+                    r"blockchain\s+technology\s+works",
+                ],
+                "exception_terms": [
+                    "educational content",
+                    "informational only",
+                    "security warning",
+                    "risk disclosure",
+                    "for educational purposes",
+                ],
+            },
         }

@@ -2,7 +2,7 @@
 API route handlers.
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
 import uuid
@@ -40,7 +40,8 @@ def create_app() -> Flask:
                 "health": "/health",
                 "check": "/v1/ads/meta/image/check (POST)",
                 "analyze": "/analyze (POST) - legacy",
-                "rules": "/rules"
+                "rules": "/rules",
+                "viewer": "/viewer"
             }
         })
     
@@ -134,6 +135,13 @@ def create_app() -> Flask:
         # Delegate to check_image for consistency
         return check_image()
     
+    @app.route('/viewer')
+    @app.route('/viewer/')
+    def viewer():
+        """Serve the viewer-only web app (static)."""
+        webapp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'webapp')
+        return send_from_directory(webapp_dir, 'index.html')
+
     @app.route('/rules', methods=['GET'])
     def get_rules():
         """Get available compliance rules."""

@@ -237,7 +237,7 @@
 
             <div class="panel">
                 <h2>Submit</h2>
-                <div class="muted">Calls: <code>http://localhost:5001/v1/ads/meta/image/check</code></div>
+                <div class="muted">Calls: <code>POST /v1/ads/meta/image/check</code></div>
                 <button id="analyzeBtn" onclick="analyzeImage()" disabled>Analyze Ad</button>
                 <div id="result"></div>
             </div>
@@ -246,7 +246,7 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5001/v1/ads/meta/image/check';
+        const API_URL = (typeof window !== 'undefined' && window.location ? window.location.origin : '') + '/v1/ads/meta/image/check';
 
         const uploadArea = document.getElementById('uploadArea');
         const imageInput = document.getElementById('imageInput');

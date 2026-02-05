@@ -2,12 +2,14 @@
 Main application entry point.
 
 Run with: python app.py
+Gunicorn: gunicorn app:app
 """
 
 from api.routes import create_app
 
+app = create_app()
+
 if __name__ == '__main__':
-    app = create_app()
     
     print("=" * 60)
     print("🚀 SentriLens Compliance API")

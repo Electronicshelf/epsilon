@@ -130,10 +130,11 @@ epsilon/
 ├── pipeline/         # Compliance pipeline orchestration
 │   ├── __init__.py
 │   └── engine.py
-├── models/           # Model wrappers (OCR, Vision, VLM)
+├── models/           # Model wrappers (OCR, Vision, Embeddings, VLM)
 │   ├── __init__.py
 │   ├── ocr.py
 │   ├── vision.py
+│   ├── embedding.py
 │   └── vlm.py
 ├── schemas/          # Data models
 │   ├── __init__.py
@@ -151,7 +152,7 @@ epsilon/
 - **API-First**: Backend is a REST API, frontend is a consumer
 - **Pipeline-Based**: Clear flow from signals to violations to outcome
 - **Minimal**: No production infra, auth, or dashboards
-- **OCR is primary**: Violations are triggered by OCR text matches (rules). Vision/embeddings/VLM are supporting evidence only.
+- **OCR is primary**: Most violations are triggered by OCR text matches. Vision and embeddings are supporting evidence only. Exception: **weapons_ammunition_explosives** can be triggered by vision (detected objects) with OCR as optional support.
 - **Model integrations (current)**:
   - OCR: Tesseract (real)
   - Vision: Grounding DINO object detection (real; supporting evidence only)
@@ -169,12 +170,20 @@ epsilon/
 
 ## Compliance Rules
 
-Rules are defined in `pipeline/engine.py` and check for:
-- Prohibited text claims (e.g., "cure", "guaranteed")
-- Medical / health claims (`medical_health_claims`) (OCR-triggered; supporting evidence may include vision/embedding signals)
-- Restricted objects/scenes
-- Brand usage violations
-- Contextual violations
+Rules are defined in `pipeline/engine.py`. Use `GET /rules` to list them. Current policy categories (Meta Ads–oriented):
+
+| Policy ID | Category | Trigger |
+|-----------|----------|---------|
+| `misleading_exaggerated_claims` | Claims | OCR |
+| `medical_health_claims` | Health | OCR |
+| `fraud_scams_deceptive` | Fraud | OCR |
+| `weapons_ammunition_explosives` | Restricted Goods | **Vision** (OCR optional) |
+| `tobacco_nicotine` | Restricted Goods | OCR (exceptions: cessation/NRT) |
+| `gambling` | Restricted Goods | OCR (exceptions: free/fun, informational) |
+| `financial_products_and_guarantees` | Financial | OCR (exceptions: educational) |
+| `cryptocurrency_services` | Financial | OCR (exceptions: informational) |
+
+Plus legacy rule IDs (`biopharma_prohibited_claims`, `finance_prohibited_claims`, `ads_prohibited_claims`). Vision and embedding signals attach as supporting evidence where configured; they do not trigger violations except for weapons.
 
 ## Development
 
@@ -193,7 +202,7 @@ The codebase is designed to be:
 
 ## Notes
 
-- Vision/embedding/VLM signals are used for **supporting evidence only** and must not create violations by themselves
-- Rules are hardcoded but structured for easy extension
+- Vision/embedding/VLM signals are **supporting evidence only** for most policies; the only vision-primary policy is **weapons_ammunition_explosives**
+- Rules are hardcoded in `pipeline/engine.py` but structured for easy extension (prohibited_terms, patterns, exception_patterns)
 - Web app is a thin client with no business logic
 - All compliance logic lives in the backend pipeline
